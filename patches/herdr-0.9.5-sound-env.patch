@@ -1,0 +1,151 @@
+From 2882a4e8a70e5fa2b5e28853d3140169f2710ad1 Mon Sep 17 00:00:00 2001
+From: MagnusBVillumsen <magnus@boedkervillumsen.com>
+Date: Mon, 2 Nov 2026 11:44:39 +0100
+Subject: [PATCH] Mute notification sounds for panes launched with
+ HERDR_SOUND=off
+
+---
+ src/platform/linux.rs                |  7 +++++++
+ src/platform/macos.rs                |  9 +++++++++
+ src/platform/mod.rs                  | 23 +++++++++++++++++++++++
+ src/server/headless/notifications.rs | 24 +++++++++++++++++++++++-
+ 4 files changed, 62 insertions(+), 1 deletion(-)
+
+diff --git a/src/platform/linux.rs b/src/platform/linux.rs
+index ea9b13d..e03b259 100644
+--- a/src/platform/linux.rs
++++ b/src/platform/linux.rs
+@@ -795,6 +795,13 @@ pub fn process_agent_hint(pid: u32) -> Option<crate::detect::Agent> {
+     super::parse_agent_env_hint(&environ)
+ }
+ 
++/// Whether a pane process was launched with `HERDR_SOUND=off`.
++pub fn process_sound_muted(pid: u32) -> bool {
++    pid != 0
++        && std::fs::read(format!("/proc/{pid}/environ"))
++            .is_ok_and(|environ| super::parse_sound_env_muted(&environ))
++}
++
+ pub fn session_processes(child_pid: u32) -> Vec<u32> {
+     let Some(session_id) = process_session_id(child_pid) else {
+         return Vec::new();
+diff --git a/src/platform/macos.rs b/src/platform/macos.rs
+index 484ed1c..7eb7629 100644
+--- a/src/platform/macos.rs
++++ b/src/platform/macos.rs
+@@ -1010,6 +1010,15 @@ pub fn process_agent_hint(pid: u32) -> Option<crate::detect::Agent> {
+     super::parse_agent_env_hint(procargs2_env(&buf)?)
+ }
+ 
++/// Whether a pane process was launched with `HERDR_SOUND=off`.
++pub fn process_sound_muted(pid: u32) -> bool {
++    pid != 0
++        && kern_procargs2(pid)
++            .as_deref()
++            .and_then(procargs2_env)
++            .is_some_and(super::parse_sound_env_muted)
++}
++
+ fn procargs2_argv_start(rest: &[u8]) -> Option<usize> {
+     let exec_end = rest.iter().position(|&byte| byte == 0)?;
+     let mut pos = exec_end;
+diff --git a/src/platform/mod.rs b/src/platform/mod.rs
+index 0349d7c..e6e922b 100644
+--- a/src/platform/mod.rs
++++ b/src/platform/mod.rs
+@@ -599,6 +599,11 @@ pub fn process_agent_hint(_pid: u32) -> Option<crate::detect::Agent> {
+     None
+ }
+ 
++#[cfg(not(any(target_os = "linux", target_os = "macos")))]
++pub fn process_sound_muted(_pid: u32) -> bool {
++    false
++}
++
+ #[cfg(any(target_os = "linux", target_os = "macos"))]
+ pub(crate) fn parse_agent_env_hint(environ: &[u8]) -> Option<crate::detect::Agent> {
+     for record in environ.split(|&byte| byte == 0) {
+@@ -610,6 +615,15 @@ pub(crate) fn parse_agent_env_hint(environ: &[u8]) -> Option<crate::detect::Agen
+     None
+ }
+ 
++/// Whether a process environment sets `HERDR_SOUND=off`, which mutes the
++/// pane's notification sounds.
++#[cfg(any(target_os = "linux", target_os = "macos"))]
++pub(crate) fn parse_sound_env_muted(environ: &[u8]) -> bool {
++    environ
++        .split(|&byte| byte == 0)
++        .any(|record| record == b"HERDR_SOUND=off")
++}
++
+ #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+ #[derive(Debug)]
+ pub(crate) struct InputSourceRestore;
+@@ -844,6 +858,15 @@ mod tests {
+         assert_eq!(parse_agent_env_hint(b"HERDR_AGENT=not-an-agent\0"), None);
+     }
+ 
++    #[cfg(any(target_os = "linux", target_os = "macos"))]
++    #[test]
++    fn parse_sound_env_muted_requires_exact_off() {
++        assert!(parse_sound_env_muted(b"PATH=/bin\0HERDR_SOUND=off\0TERM=xterm\0"));
++        assert!(!parse_sound_env_muted(b"HERDR_SOUND=on\0"));
++        assert!(!parse_sound_env_muted(b"HERDR_SOUND=offline\0"));
++        assert!(!parse_sound_env_muted(b"PATH=/bin\0"));
++    }
++
+     #[cfg(any(target_os = "linux", target_os = "macos"))]
+     #[test]
+     fn interactive_shell_command_quotes_for_posix_and_powershell() {
+diff --git a/src/server/headless/notifications.rs b/src/server/headless/notifications.rs
+index 1025acb..78a2526 100644
+--- a/src/server/headless/notifications.rs
++++ b/src/server/headless/notifications.rs
+@@ -19,6 +19,24 @@ impl HeadlessServer {
+             .unwrap_or(crate::detect::AgentState::Unknown)
+     }
+ 
++    /// Whether the pane's process was launched with `HERDR_SOUND=off`.
++    fn pane_sound_muted(&self, pane_id: crate::layout::PaneId) -> bool {
++        self.app
++            .state
++            .workspaces
++            .iter()
++            .find_map(|ws| {
++                ws.tabs.iter().find_map(|tab| {
++                    let pane = tab.panes.get(&pane_id)?;
++                    self.app
++                        .terminal_runtimes
++                        .get(&pane.attached_terminal_id)?
++                        .child_pid()
++                })
++            })
++            .is_some_and(crate::platform::process_sound_muted)
++    }
++
+     fn forward_semantic_agent_notification(
+         &mut self,
+         update: &crate::app::actions::PaneStateUpdate,
+@@ -84,6 +102,7 @@ impl HeadlessServer {
+                 None,
+             ),
+         };
++        let sound = sound.filter(|_| !self.pane_sound_muted(pane_id));
+         let workspace_id = workspace.id.clone();
+         let tab_id = crate::workspace::public_tab_id_for_number(&workspace_id, tab_number);
+         let workspace_label =
+@@ -123,7 +142,10 @@ impl HeadlessServer {
+         let suppress_active_tab_notifications =
+             self.active_tab_suppresses_notifications(is_active_tab);
+ 
+-        if !update.suppress_completion && self.app.state.sound.allows(update.known_agent) {
++        if !update.suppress_completion
++            && self.app.state.sound.allows(update.known_agent)
++            && !self.pane_sound_muted(update.pane_id)
++        {
+             if let Some(sound) = crate::app::actions::notification_sound_for_state_change(
+                 suppress_active_tab_notifications,
+                 update.previous_state,
+-- 
+2.56.0
+

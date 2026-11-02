@@ -79,12 +79,40 @@ screen is the fallback. Tasks are recorded in
 `$XDG_STATE_HOME/herdr-delegate/tasks`, and worktrees are created in
 `$XDG_STATE_HOME/herdr-delegate/worktrees`.
 
-Delegated panes are launched with `HERDR_SOUND=off`, so they do not ping you
-when they finish; the agent that asked follows them instead. This needs a
-Herdr that honours the variable; others ignore it.
-
 Codex's sandbox keeps a worktree's git metadata read-only, so editing children
 leave their changes uncommitted. The caller reviews the diff and commits.
+
+## Muting delegated panes
+
+Herdr plays a sound when an agent in the background finishes or needs input.
+For a delegated child that is noise: the agent that asked is already waiting
+for it. herdr-delegate launches its panes with `HERDR_SOUND=off`, but stock
+Herdr has no such setting and ignores it, so you still hear them. Everything
+else works without it.
+
+[`patches/herdr-0.9.5-sound-env.patch`](patches/herdr-0.9.5-sound-env.patch)
+adds it to Herdr 0.9.5: panes whose shell was started with `HERDR_SOUND=off`
+make no notification sound. Other panes and `ui.sound` behave as before. It is
+a small change to `src/platform` and `src/server/headless/notifications.rs`.
+Herdr does not take outside pull requests, so it lives here.
+
+Build Herdr with it:
+
+```bash
+git clone --branch v0.9.5 https://github.com/herdrdev/herdr && cd herdr
+git apply /path/to/herdr-delegate/patches/herdr-0.9.5-sound-env.patch
+cargo build --release     # needs zig 0.16; or: nix build
+```
+
+Or in Nix, on Herdr's own package:
+
+```nix
+(pkgs.callPackage "${herdrSrc}/nix/package.nix" { }).overrideAttrs (o: {
+  patches = (o.patches or [ ]) ++ [ ./herdr-0.9.5-sound-env.patch ];
+})
+```
+
+Restart the Herdr server afterwards; panes started before then keep pinging.
 
 ## License
 
