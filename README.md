@@ -79,6 +79,10 @@ screen is the fallback. Tasks are recorded in
 `$XDG_STATE_HOME/herdr-delegate/tasks`, and worktrees are created in
 `$XDG_STATE_HOME/herdr-delegate/worktrees`.
 
+Delegated panes are launched with `HERDR_SOUND=off`, so they do not ping you
+when they finish; the agent that asked follows them instead. This needs a
+Herdr that honours the variable; others ignore it.
+
 Codex's sandbox keeps a worktree's git metadata read-only, so editing children
 leave their changes uncommitted. The caller reviews the diff and commits.
 

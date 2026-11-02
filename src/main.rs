@@ -402,6 +402,10 @@ git worktree add -q -b "delegate/$2" "$dir" "$3" >&2 && printf %s "$dir""#;
 }
 
 /// Opens the pane the agent runs in and returns its id.
+/// Herdr plays no notification sounds for panes launched with this; the
+/// caller follows the child itself. Herdr without support ignores it.
+const MUTE: &str = "HERDR_SOUND=off";
+
 fn place(herdr: &Herdr, cwd: &str, id: &str, placement: Placement) -> Result<String> {
     let caller = match herdr.machine() {
         None if std::env::var("HERDR_ENV").as_deref() == Ok("1") => {
@@ -428,6 +432,8 @@ fn place(herdr: &Herdr, cwd: &str, id: &str, placement: Placement) -> Result<Str
                 "--label",
                 id,
                 "--no-focus",
+                "--env",
+                MUTE,
             ])?,
             None => herdr.call(&[
                 "workspace",
@@ -437,6 +443,8 @@ fn place(herdr: &Herdr, cwd: &str, id: &str, placement: Placement) -> Result<Str
                 "--label",
                 "delegate",
                 "--no-focus",
+                "--env",
+                MUTE,
             ])?,
         };
         return string(&r["root_pane"]["pane_id"]);
@@ -464,6 +472,8 @@ fn place(herdr: &Herdr, cwd: &str, id: &str, placement: Placement) -> Result<Str
             "--cwd",
             cwd,
             "--no-focus",
+            "--env",
+            MUTE,
         ])?;
         return string(&r["pane"]["pane_id"]);
     }
@@ -478,6 +488,8 @@ fn place(herdr: &Herdr, cwd: &str, id: &str, placement: Placement) -> Result<Str
         "--label",
         id,
         "--no-focus",
+        "--env",
+        MUTE,
     ])?;
     string(&r["root_pane"]["pane_id"])
 }
